@@ -1,165 +1,166 @@
-import csv
-import math
-import random
-import statistics
-from collections import Counter
+
+import joblib
+import pandas as pd
+
 from pathlib import Path
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from fastapi import Form
 
-import streamlit as st
+MODEL_PATH = Path(__file__).parent / "artifacts" / "house_price_model.pkl"
+model = joblib.load(MODEL_PATH)
 
-
-DATA_PATH = Path(__file__).with_name("Housing.csv")
-TARGET = "price"
-NUMERIC_FEATURES = ["area", "bedrooms", "bathrooms", "stories", "parking"]
-CATEGORICAL_FEATURES = [
-    "mainroad",
-    "guestroom",
-    "basement",
-    "hotwaterheating",
-    "airconditioning",
-    "prefarea",
-    "furnishingstatus",
-]
+app = FastAPI(title="House Price Prediction")
 
 
-@st.cache_data
-def load_data():
-    with DATA_PATH.open(newline="", encoding="utf-8-sig") as csv_file:
-        reader = csv.DictReader(csv_file)
-        data = list(reader)
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+    <html>
+    <head>
+        <title>House Price Prediction</title>
+        <style>
+            body {
+                font-family: Arial;
+                background: #eef2f7;
+                padding: 30px;
+            }
+            .container {
+                max-width: 600px;
+                margin: auto;
+                background: white;
+                padding: 25px;
+                border-radius: 12px;
+                box-shadow: 0 2px 12px #ccc;
+            }
+            h1 { text-align: center; color: #234; }
+            label { display: block; margin-top: 12px; }
+            input, select {
+                width: 100%;
+                padding: 10px;
+                margin-top: 5px;
+                box-sizing: border-box;
+            }
+            button {
+                width: 100%;
+                margin-top: 20px;
+                padding: 12px;
+                background: #1769aa;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+        </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>House Price Prediction</h1>
+        <form action="/predict" method="post">
+          <label>Area (square feet)</label>
+          <input type="number" name="area" min="1" step="any" required>
 
-    expected_columns = {TARGET, *NUMERIC_FEATURES, *CATEGORICAL_FEATURES}
-    missing_columns = expected_columns.difference(reader.fieldnames or [])
-    if missing_columns:
-        raise ValueError(f"Housing.csv is missing columns: {', '.join(sorted(missing_columns))}")
+          <label>Bedrooms</label>
+          <input type="number" name="bedrooms" min="0" required>
 
-    for row in data:
-        row[TARGET] = float(row[TARGET])
-        for feature in NUMERIC_FEATURES:
-            row[feature] = float(row[feature])
-    return data
+          <label>Bathrooms</label>
+          <input type="number" name="bathrooms" min="0" required>
 
+          <label>Stories</label>
+          <input type="number" name="stories" min="0" required>
 
-def feature_scales(records):
-    return {
-        feature: max(
-            max(record[feature] for record in records)
-            - min(record[feature] for record in records),
-            1.0,
-        )
-        for feature in NUMERIC_FEATURES
-    }
+          <label>Main Road</label>
+          <select name="mainroad">
+            <option>yes</option><option>no</option>
+          </select>
 
+          <label>Guest Room</label>
+          <select name="guestroom">
+            <option>yes</option><option>no</option>
+          </select>
 
-def predict_price(home, records, scales):
-    distances = []
-    for record in records:
-        distance = sum(
-            ((home[feature] - record[feature]) / scales[feature]) ** 2
-            for feature in NUMERIC_FEATURES
-        )
-        distance += sum(
-            home[feature] != record[feature] for feature in CATEGORICAL_FEATURES
-        )
-        distances.append((distance, record[TARGET]))
+          <label>Basement</label>
+          <select name="basement">
+            <option>yes</option><option>no</option>
+          </select>
 
-    nearest = sorted(distances, key=lambda item: item[0])[: min(7, len(distances))]
-    exact_matches = [price for distance, price in nearest if distance == 0]
-    if exact_matches:
-        return statistics.mean(exact_matches)
+          <label>Hot Water Heating</label>
+          <select name="hotwaterheating">
+            <option>yes</option><option>no</option>
+          </select>
 
-    weighted_prices = [price / math.sqrt(distance) for distance, price in nearest]
-    weights = [1 / math.sqrt(distance) for distance, _ in nearest]
-    return sum(weighted_prices) / sum(weights)
+          <label>Air Conditioning</label>
+          <select name="airconditioning">
+            <option>yes</option><option>no</option>
+          </select>
 
+          <label>Parking Spaces</label>
+          <input type="number" name="parking" min="0" required>
 
-@st.cache_data
-def evaluate_model(records):
-    shuffled_records = list(records)
-    random.Random(42).shuffle(shuffled_records)
-    test_count = max(1, round(len(shuffled_records) * 0.2))
-    test_records = shuffled_records[:test_count]
-    training_records = shuffled_records[test_count:]
-    scales = feature_scales(training_records)
-    actual = [record[TARGET] for record in test_records]
-    predicted = [predict_price(record, training_records, scales) for record in test_records]
-    mae = statistics.mean(abs(expected - estimate) for expected, estimate in zip(actual, predicted))
-    mean_actual = statistics.mean(actual)
-    total_variation = sum((value - mean_actual) ** 2 for value in actual)
-    residual_variation = sum((expected - estimate) ** 2 for expected, estimate in zip(actual, predicted))
-    r2 = 1 - residual_variation / total_variation if total_variation else 0.0
-    return {"mae": mae, "r2": r2}
+          <label>Preferred Area</label>
+          <select name="prefarea">
+            <option>yes</option><option>no</option>
+          </select>
+
+          <label>Furnishing Status</label>
+          <select name="furnishingstatus">
+            <option value="furnished">Furnished</option>
+            <option value="semi-furnished">Semi-furnished</option>
+            <option value="unfurnished">Unfurnished</option>
+          </select>
+
+          <button type="submit">Predict House Price</button>
+        </form>
+      </div>
+    </body>
+    </html>
+    """
 
 
-st.set_page_config(page_title="House Price Predictor", page_icon="⌂", layout="centered")
-st.title("House Price Predictor")
-st.caption("Estimate a sale price from the home's size, features, and furnishing status.")
+@app.post("/predict", response_class=HTMLResponse)
+def predict_price(
+    area: float = Form(...),
+    bedrooms: int = Form(...),
+    bathrooms: int = Form(...),
+    stories: int = Form(...),
+    mainroad: str = Form(...),
+    guestroom: str = Form(...),
+    basement: str = Form(...),
+    hotwaterheating: str = Form(...),
+    airconditioning: str = Form(...),
+    parking: int = Form(...),
+    prefarea: str = Form(...),
+    furnishingstatus: str = Form(...)
+):
+    data = pd.DataFrame([{
+        "area": area,
+        "bedrooms": bedrooms,
+        "bathrooms": bathrooms,
+        "stories": stories,
+        "mainroad": mainroad,
+        "guestroom": guestroom,
+        "basement": basement,
+        "hotwaterheating": hotwaterheating,
+        "airconditioning": airconditioning,
+        "parking": parking,
+        "prefarea": prefarea,
+        "furnishingstatus": furnishingstatus
+    }])
 
-try:
-    housing_data = load_data()
-    if len(housing_data) < 2:
-        raise ValueError("Housing.csv must contain at least two data rows.")
-    model_metrics = evaluate_model(housing_data)
-except (FileNotFoundError, ValueError) as error:
-    st.error(str(error))
-    st.stop()
+    prediction = float(model.predict(data)[0])
 
-metric_columns = st.columns(2)
-metric_columns[0].metric("Test-set mean absolute error", f"{model_metrics['mae']:,.0f}")
-metric_columns[1].metric("Test-set R²", f"{model_metrics['r2']:.2f}")
-
-numeric_defaults = {
-    feature: round(statistics.median(record[feature] for record in housing_data))
-    for feature in NUMERIC_FEATURES
-}
-categorical_defaults = {
-    feature: Counter(record[feature] for record in housing_data).most_common(1)[0][0]
-    for feature in CATEGORICAL_FEATURES
-}
-
-with st.form("prediction_form"):
-    st.subheader("Property details")
-    first_row = st.columns(3)
-    area = first_row[0].number_input(
-        "Area (sq ft)", min_value=1, value=max(1, int(numeric_defaults["area"])), step=100
-    )
-    bedrooms = first_row[1].number_input(
-        "Bedrooms", min_value=0, value=int(numeric_defaults["bedrooms"]), step=1
-    )
-    bathrooms = first_row[2].number_input(
-        "Bathrooms", min_value=0, value=int(numeric_defaults["bathrooms"]), step=1
-    )
-
-    second_row = st.columns(2)
-    stories = second_row[0].number_input(
-        "Stories", min_value=1, value=max(1, int(numeric_defaults["stories"])), step=1
-    )
-    parking = second_row[1].number_input(
-        "Parking spaces", min_value=0, value=int(numeric_defaults["parking"]), step=1
-    )
-
-    categorical_inputs = {}
-    for start in range(0, len(CATEGORICAL_FEATURES), 2):
-        fields = st.columns(2)
-        for offset, feature in enumerate(CATEGORICAL_FEATURES[start : start + 2]):
-            options = sorted({record[feature] for record in housing_data})
-            default = categorical_defaults[feature]
-            categorical_inputs[feature] = fields[offset].selectbox(
-                feature.replace("_", " ").title(),
-                options,
-                index=options.index(default),
-            )
-
-    submitted = st.form_submit_button("Estimate price", type="primary", use_container_width=True)
-
-if submitted:
-    property_details = {
-        "area": float(area),
-        "bedrooms": float(bedrooms),
-        "bathrooms": float(bathrooms),
-        "stories": float(stories),
-        "parking": float(parking),
-        **categorical_inputs,
-    }
-    estimate = predict_price(property_details, housing_data, feature_scales(housing_data))
-    st.success(f"Estimated price: {estimate:,.0f}")
+    return f"""
+    <html>
+    <body style="font-family:Arial;text-align:center;
+                 background:#eef2f7;padding:50px">
+      <div style="background:white;padding:30px;border-radius:12px;
+                  max-width:600px;margin:auto">
+        <h1>Predicted House Price</h1>
+        <h2 style="color:green">{prediction:,.2f}</h2>
+        <p>Prediction is in the same currency units as your training dataset.</p>
+        <a href="/">Predict Another House</a>
+      </div>
+    </body>
+    </html>
+    """
